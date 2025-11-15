@@ -12,7 +12,9 @@
 
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif // !NOMINMAX
 #include <WinSock2.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
@@ -294,6 +296,7 @@ private:
             }
         }
         this->state_ = State::Connected;
+        this->NotifyConnected();
     }
 
     void OnTextFrame(const Frame &frame) { this->NotifyText(frame); }
@@ -336,9 +339,10 @@ public:
 
         virtual void OnError(std::error_code code) {}
 
-        virtual CompressType OnHandshake(const std::vector<CompressType> &supported_compress_type) {
+        virtual CompressType OnHandshake(const std::vector<CompressType> &request_compress_type) {
             return CompressType::None;
         }
+        virtual void OnConnected() {}
         virtual void OnClose(int16_t code, const std::string &reason) {}
         virtual void OnPing() {}
         virtual void OnPong() {}
@@ -353,9 +357,9 @@ public:
             listener_->OnError(code);
         }
     }
-    CompressType NotifyHandshake(const std::vector<CompressType> &supported_compress_type) {
+    CompressType NotifyHandshake(const std::vector<CompressType> &request_compress_type) {
         if(listener_) {
-            return listener_->OnHandshake(supported_compress_type);
+            return listener_->OnHandshake(request_compress_type);
         }
         return CompressType::None;
     }
@@ -405,6 +409,11 @@ public:
         }
     }
 
+    void NotifyConnected() {
+        if(listener_) {
+            listener_->OnConnected();
+        }
+    }
 
 private:
     Listener *listener_{nullptr};

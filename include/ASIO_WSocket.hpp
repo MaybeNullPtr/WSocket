@@ -31,19 +31,7 @@ protected:
 
 private:
     // Initialize common settings
-    void Initialize() {
-        keep_alive_manager_.ResetListener(this);
-        wsocket_context_.ResetListener(this);
-
-        // Set send handler
-        wsocket_context_.ResetSendHandler([this](Buffer buffer) {
-            asio::error_code ec;
-            this->socket_.send(asio::buffer(buffer.buf, buffer.size), 0, ec);
-            if(ec) {
-                this->OnError(ec);
-            }
-        });
-    }
+    void Initialize();
 
 public:
     static std::shared_ptr<WSocketBase> Create(asio::any_io_executor io_executor) {
@@ -53,17 +41,11 @@ public:
         return std::shared_ptr<WSocketBase>(new WSocketBase(std::move(socket)));
     }
 
-    ~WSocketBase() override {
-        wsocket_context_.ResetListener(nullptr);
-        wsocket_context_.ResetSendHandler(nullptr);
-        keep_alive_manager_.ResetListener(nullptr);
+    ~WSocketBase() override;
 
-        if(socket_.is_open()) {
-            asio::error_code ec;
-            std::ignore = socket_.close(ec); // Ignore close errors
-        }
-    }
-
+    /**
+     * Start WSocket operations (data reception and keep-alive management)
+     */
     void Start() {
         this->StartRecv();
         keep_alive_manager_.Start();
@@ -76,16 +58,7 @@ public:
     }
 
     // Initiate connection and perform WSocket handshake
-    void Handshake(const endpoint_type &endpoint) {
-        auto _this = this->shared_from_this();
-        socket_.async_connect(endpoint, [=](asio::error_code ec) {
-            if(ec) {
-                this->OnError(ec);
-                return;
-            }
-            _this->OnSocketConnected();
-        });
-    }
+    void Handshake(const endpoint_type &endpoint);
 
     // Send Ping frame
     void Ping() { this->wsocket_context_.Ping(); }
@@ -108,9 +81,10 @@ public:
 protected:
     //============ WSocketContext::Listener start ============//
     void         OnError(std::error_code code) override {}
-    CompressType OnHandshake(const std::vector<CompressType> &supported_compress_type) override {
+    CompressType OnHandshake(const std::vector<CompressType> &request_compress_type) override {
         return CompressType::None;
     }
+    void OnConnected() override {}
     void OnClose(int16_t code, const std::string &reason) override {}
     void OnPing() override { this->wsocket_context_.Pong(); }
     void OnPong() override {}
@@ -119,25 +93,12 @@ protected:
     //============ WSocketContext::Listener end ============//
 
     //============ KeepAliveManager::Listener start ============//
-    void OnKeepAliveExpired(std::error_code ec) override {
-        if(ec == asio::error::operation_aborted) {
-            return;
-        }
-        this->keep_alive_manager_.Flush();
-        this->wsocket_context_.Ping();
-    }
-    void OnKeepAliveTimeout(std::error_code ec) override {
-        if(ec == asio::error::operation_aborted) {
-            return;
-        }
-        this->wsocket_context_.Close(CloseCode::CLOSE_PROTOCOL_ERROR);
-
-        asio::error_code ignore_ec;
-        std::ignore = socket_.shutdown(socket_type::shutdown_both, ignore_ec);
-
-        this->OnError(Error::KeepAliveTimeout);
-    }
+    void OnKeepAliveExpired(std::error_code ec) override;
+    void OnKeepAliveTimeout(std::error_code ec) override;
     //============ KeepAliveManager::Listener end ============//
+
+    socket_type       &get_raw_socket() { return socket_; }
+    const socket_type &get_raw_socket() const { return socket_; }
 
 private:
     // connection success callback
@@ -152,17 +113,7 @@ private:
     }
 
     // Start asynchronous data reception
-    void StartRecv() {
-        auto _this = this->shared_from_this();
-        auto buf   = wsocket_context_.PrepareWrite();
-        socket_.async_receive(asio::buffer(buf.buf, buf.size), [=](std::error_code ec, std::size_t bytes_transferred) {
-            if(ec) {
-                _this->OnError(ec);
-                return;
-            }
-            _this->OnReceived(bytes_transferred);
-        });
-    }
+    void StartRecv();
 
 private:
     socket_type      socket_;
@@ -175,6 +126,83 @@ using WSocket = WSocketBase<asio::ip::tcp>;
 using UnixWSocket = WSocketBase<asio::local::stream_protocol>;
 #endif
 
+template <typename Protocol>
+void WSocketBase<Protocol>::Initialize() {
+    keep_alive_manager_.ResetListener(this);
+    wsocket_context_.ResetListener(this);
+
+    // Set send handler
+    wsocket_context_.ResetSendHandler([this](Buffer buffer) {
+        asio::error_code ec;
+        this->socket_.send(asio::buffer(buffer.buf, buffer.size), 0, ec);
+        if(ec) {
+            this->OnError(ec);
+        }
+    });
+}
+
+template <typename Protocol>
+WSocketBase<Protocol>::~WSocketBase() {
+    wsocket_context_.ResetListener(nullptr);
+    wsocket_context_.ResetSendHandler(nullptr);
+    keep_alive_manager_.ResetListener(nullptr);
+
+    if(socket_.is_open()) {
+        asio::error_code ec;
+        std::ignore = socket_.close(ec); // Ignore close errors
+    }
+}
+
+template <typename Protocol>
+void WSocketBase<Protocol>::Handshake(const endpoint_type &endpoint) {
+    auto _this = this->shared_from_this();
+    socket_.async_connect(endpoint, [=](asio::error_code ec) {
+        if(ec) {
+            this->OnError(ec);
+            return;
+        }
+        _this->OnSocketConnected();
+    });
+}
+
+//============ KeepAliveManager::Listener start ============//
+
+template <typename Protocol>
+void WSocketBase<Protocol>::OnKeepAliveExpired(std::error_code ec) {
+    if(ec == asio::error::operation_aborted) {
+        return;
+    }
+    this->keep_alive_manager_.Flush();
+    this->wsocket_context_.Ping();
+}
+
+template <typename Protocol>
+void WSocketBase<Protocol>::OnKeepAliveTimeout(std::error_code ec) {
+    if(ec == asio::error::operation_aborted) {
+        return;
+    }
+    this->wsocket_context_.Close(CloseCode::CLOSE_PROTOCOL_ERROR);
+
+    asio::error_code ignore_ec;
+    std::ignore = socket_.shutdown(socket_type::shutdown_both, ignore_ec);
+
+    this->OnError(Error::KeepAliveTimeout);
+}
+
+//============ KeepAliveManager::Listener end ============//
+
+template <typename Protocol>
+void WSocketBase<Protocol>::StartRecv() {
+    auto _this = this->shared_from_this();
+    auto buf   = wsocket_context_.PrepareWrite();
+    socket_.async_receive(asio::buffer(buf.buf, buf.size), [=](std::error_code ec, std::size_t bytes_transferred) {
+        if(ec) {
+            _this->OnError(ec);
+            return;
+        }
+        _this->OnReceived(bytes_transferred);
+    });
+}
 
 } // namespace wsocket
 

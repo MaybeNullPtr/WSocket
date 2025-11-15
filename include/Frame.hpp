@@ -64,14 +64,23 @@ public:
 
     // Payload length handling with automatic encoding selection
     size_t Length() const {
+        // Determine actual payload length based on encoding
+
         if(header_.payload_length == 0b1111'1111) {
+            // 64-bit length
             return htonll(this->payload_length_);
         }
         if(header_.payload_length == 0b1111'1110) {
+            // 16-bit length
             return htons(this->payload_length_);
         }
+        // Direct length
         return header_.payload_length;
     }
+    /**
+     * Set payload length with automatic encoding selection
+     * @param len Actual payload length to set
+     */
     void Length(uint64_t len) {
         if(len < 0b1111'1110) {
             this->header_.payload_length = len;
@@ -84,7 +93,10 @@ public:
         }
     }
 
-    // Calculate total header size based on payload length encoding
+    /**
+     * Calculate total header length in bytes
+     * based on current payload length encoding
+     */
     int HeaderLength() const {
         // 2 bytes
         static constexpr int basic_len = sizeof(BasicHeader);

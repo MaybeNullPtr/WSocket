@@ -1,4 +1,4 @@
-#include <bitset>
+﻿#include <bitset>
 #include <cassert>
 #include <iostream>
 
@@ -310,18 +310,21 @@ void test_WSocketContext() {
     ctx2.Close(wsocket::CloseCode::CLOSE_NORMAL);
     std::cout << "================== test_WSocketContext ==================" << std::endl;
 }
+
 #ifdef WITH_ASIO
 class TestWSocket : public wsocket::WSocket {
 protected:
-    explicit TestWSocket(const asio::any_io_executor &io_executor) : wsocket::WSocket(io_executor) {}
-    explicit TestWSocket(asio::ip::tcp::socket &&socket) : wsocket::WSocket(std::move(socket)) {}
+    explicit TestWSocket(asio::io_context &io_executor) :
+        wsocket::WSocket(io_executor.get_executor()), executor_(io_executor) {}
+    explicit TestWSocket(asio::io_context &io_executor, asio::ip::tcp::socket &&socket) :
+        wsocket::WSocket(std::move(socket)), executor_(io_executor) {}
 
 public:
-    static std::shared_ptr<TestWSocket> Create(asio::any_io_executor io_executor) {
+    static std::shared_ptr<TestWSocket> Create(asio::io_context &io_executor) {
         return std::shared_ptr<TestWSocket>(new TestWSocket(std::move(io_executor)));
     }
-    static std::shared_ptr<TestWSocket> Create(asio::ip::tcp::socket &&socket) {
-        return std::shared_ptr<TestWSocket>(new TestWSocket(std::move(socket)));
+    static std::shared_ptr<TestWSocket> Create(asio::io_context &io_executor, asio::ip::tcp::socket &&socket) {
+        return std::shared_ptr<TestWSocket>(new TestWSocket(io_executor, std::move(socket)));
     }
 
     ~TestWSocket() override {}
@@ -329,11 +332,18 @@ public:
 private:
     void                  OnError(std::error_code code) override { std::cout << "OnError: " << code << std::endl; }
     wsocket::CompressType OnHandshake(const std::vector<wsocket::CompressType> &surpported_compress_type) override {
-        std::cout << "OnConnected" << std::endl;
+        std::cout << "OnOnHandshake" << std::endl;
         return wsocket::CompressType::None;
+    }
+    void OnConnected() override {
+        std::cout << "OnConnected" << std::endl;
+        this->Text("hello");
     }
     void OnClose(int16_t code, const std::string &reason) override {
         std::cout << "OnClose: " << code << ":" << reason << std::endl;
+        if(!executor_.stopped()) {
+            executor_.stop();
+        }
     }
     void OnPing() override {
         std::cout << "OnPing" << std::endl;
@@ -341,14 +351,18 @@ private:
         this->Text("hello");
     }
     void OnPong() override { std::cout << "OnPong" << std::endl; }
-    void OnText(std::string_view text, bool finish) override { std::cout << "OnText:" << text << std::endl; }
+    void OnText(std::string_view text, bool finish) override {
+        std::cout << "OnText:" << text << std::endl;
+        this->Close(wsocket::CloseCode::CLOSE_NORMAL);
+    }
     void OnBinary(wsocket::Buffer buffer, bool finish) override {
         std::cout << "OnBinary:" << std::string(reinterpret_cast<char *>(buffer.buf), buffer.size) << std::endl;
     }
+    asio::io_context &executor_;
 };
 
 void test_asio_wsocket() {
-    std::cout << "================== test_asio_wsocket ==================" << std::endl;
+    std::cout << "================== test_asio_wsocket start ==================" << std::endl;
     asio::io_context io_executor;
 
     using tcp = asio::ip::tcp;
@@ -362,31 +376,35 @@ void test_asio_wsocket() {
         }
 
         std::cout << peer.remote_endpoint().address().to_string() << ":" << peer.remote_endpoint().port() << std::endl;
-        auto cli = TestWSocket::Create(std::move(peer));
+        auto cli = TestWSocket::Create(io_executor, std::move(peer));
         cli->Start();
     });
 
 
-    auto client = TestWSocket::Create(io_executor.get_executor());
+    auto client = TestWSocket::Create(io_executor);
     client->Handshake(asio::ip::tcp::endpoint(asio::ip::make_address_v4("127.0.0.1"), 12000));
 
     io_executor.run();
-    std::cout << "================== test_asio_wsocket ==================" << std::endl;
+    std::cout << "================== test_asio_wsocket start ==================" << std::endl;
 }
 #endif
 
 #ifdef ASIO_HAS_LOCAL_SOCKETS
+
 class TestUnixWSocket : public wsocket::UnixWSocket {
 protected:
-    explicit TestUnixWSocket(const asio::any_io_executor &io_executor) : wsocket::UnixWSocket(io_executor) {}
-    explicit TestUnixWSocket(asio::local::stream_protocol::socket &&socket) : wsocket::UnixWSocket(std::move(socket)) {}
+    explicit TestUnixWSocket(asio::io_context &io_executor) :
+        wsocket::UnixWSocket(io_executor.get_executor()), executor_(io_executor) {}
+    explicit TestUnixWSocket(asio::io_context &io_executor, asio::local::stream_protocol::socket &&socket) :
+        wsocket::UnixWSocket(std::move(socket)), executor_(io_executor) {}
 
 public:
-    static std::shared_ptr<TestUnixWSocket> Create(asio::any_io_executor io_executor) {
-        return std::shared_ptr<TestUnixWSocket>(new TestUnixWSocket(std::move(io_executor)));
+    static std::shared_ptr<TestUnixWSocket> Create(asio::io_context &io_executor) {
+        return std::shared_ptr<TestUnixWSocket>(new TestUnixWSocket(io_executor));
     }
-    static std::shared_ptr<TestUnixWSocket> Create(asio::local::stream_protocol::socket &&socket) {
-        return std::shared_ptr<TestUnixWSocket>(new TestUnixWSocket(std::move(socket)));
+    static std::shared_ptr<TestUnixWSocket> Create(asio::io_context                      &io_executor,
+                                                   asio::local::stream_protocol::socket &&socket) {
+        return std::shared_ptr<TestUnixWSocket>(new TestUnixWSocket(io_executor, std::move(socket)));
     }
 
     ~TestUnixWSocket() override {}
@@ -396,22 +414,34 @@ private:
         std::cout << "OnError: " << code << ":" << code.message() << std::endl;
     }
     wsocket::CompressType OnHandshake(const std::vector<wsocket::CompressType> &surpported_compress_type) override {
-        std::cout << "OnConnected" << std::endl;
+        std::cout << "OnHandshake" << std::endl;
         return wsocket::CompressType::None;
+    }
+    void OnConnected() override {
+        std::cout << "OnConnected" << std::endl;
+        this->Text("hello");
     }
     void OnClose(int16_t code, const std::string &reason) override {
         std::cout << "OnClose: " << code << ":" << reason << std::endl;
+        if(!executor_.stopped()) {
+            executor_.stop();
+        }
     }
     void OnPing() override {
         std::cout << "OnPing" << std::endl;
         wsocket::UnixWSocket::OnPing();
-        this->Text("hello");
+        this->Text("test_asio_unix_wsocket hello");
     }
     void OnPong() override { std::cout << "OnPong" << std::endl; }
-    void OnText(std::string_view text, bool finish) override { std::cout << "OnText:" << text << std::endl; }
+    void OnText(std::string_view text, bool finish) override {
+        std::cout << "OnText:" << text << std::endl;
+        this->Close(wsocket::CloseCode::CLOSE_NORMAL);
+    }
     void OnBinary(wsocket::Buffer buffer, bool finish) override {
         std::cout << "OnBinary:" << std::string(reinterpret_cast<char *>(buffer.buf), buffer.size) << std::endl;
     }
+
+    asio::io_context &executor_;
 };
 void test_asio_unix_wsocket() {
     asio::io_context io_executor;
@@ -443,12 +473,12 @@ void test_asio_unix_wsocket() {
         }
 
         std::cout << "remote path:" << peer.remote_endpoint().path() << std::endl;
-        auto cli = TestUnixWSocket::Create(std::move(peer));
+        auto cli = TestUnixWSocket::Create(io_executor, std::move(peer));
         cli->Start();
     });
 
 
-    auto client = TestUnixWSocket::Create(io_executor.get_executor());
+    auto client = TestUnixWSocket::Create(io_executor);
     client->Handshake(unix_socket::endpoint(path));
 
     io_executor.run();
@@ -458,17 +488,20 @@ void test_asio_unix_wsocket() {
 #endif
 
 #ifdef WITH_ZSTD
+
 class TestZstdWSocket : public wsocket::WSocket {
 protected:
-    explicit TestZstdWSocket(const asio::any_io_executor &io_executor) : wsocket::WSocket(io_executor) {}
-    explicit TestZstdWSocket(asio::ip::tcp::socket &&socket) : wsocket::WSocket(std::move(socket)) {}
+    explicit TestZstdWSocket(asio::io_context &io_executor) :
+        wsocket::WSocket(io_executor.get_executor()), executor_(io_executor) {}
+    explicit TestZstdWSocket(asio::io_context &io_executor, asio::ip::tcp::socket &&socket) :
+        wsocket::WSocket(std::move(socket)), executor_(io_executor) {}
 
 public:
-    static std::shared_ptr<TestZstdWSocket> Create(asio::any_io_executor io_executor) {
-        return std::shared_ptr<TestZstdWSocket>(new TestZstdWSocket(std::move(io_executor)));
+    static std::shared_ptr<TestZstdWSocket> Create(asio::io_context &io_executor) {
+        return std::shared_ptr<TestZstdWSocket>(new TestZstdWSocket(io_executor));
     }
-    static std::shared_ptr<TestZstdWSocket> Create(asio::ip::tcp::socket &&socket) {
-        return std::shared_ptr<TestZstdWSocket>(new TestZstdWSocket(std::move(socket)));
+    static std::shared_ptr<TestZstdWSocket> Create(asio::io_context &io_executor, asio::ip::tcp::socket &&socket) {
+        return std::shared_ptr<TestZstdWSocket>(new TestZstdWSocket(io_executor, std::move(socket)));
     }
 
     ~TestZstdWSocket() override {}
@@ -516,22 +549,29 @@ private:
     void OnError(std::error_code code) override {
         std::cout << "OnError: " << code << " " << code.message() << std::endl;
     }
-    wsocket::CompressType OnHandshake(const std::vector<wsocket::CompressType> &supported_compress_type) override {
-        std::cout << "OnHandshake, supported compress type: " << supported_compress_type.size();
-        for(auto type : supported_compress_type) {
+    wsocket::CompressType OnHandshake(const std::vector<wsocket::CompressType> &request_compress_type) override {
+        std::cout << "OnHandshake, request compress type: count:" << request_compress_type.size() << "\n:";
+        for(auto type : request_compress_type) {
             std::cout << " " << int(type);
         }
         std::cout << std::endl;
 
-        if(supported_compress_type.empty()) {
+        if(request_compress_type.empty()) {
             std::cerr << "no supported compress type" << std::endl;
             return wsocket::CompressType::None;
         }
 
-        return supported_compress_type[0];
+        return request_compress_type[0];
+    }
+    void OnConnected() override {
+        std::cout << "OnConnected" << std::endl;
+        this->Text(test_text);
     }
     void OnClose(int16_t code, const std::string &reason) override {
         std::cout << "OnClose: " << code << ":" << reason << std::endl;
+        if(!executor_.stopped()) {
+            executor_.stop();
+        }
     }
     void OnPing() override {
         std::cout << "OnPing" << std::endl;
@@ -539,10 +579,16 @@ private:
         this->Text(test_text);
     }
     void OnPong() override { std::cout << "OnPong" << std::endl; }
-    void OnText(std::string_view text, bool finish) override { std::cout << "OnText:" << text << std::endl; }
+    void OnText(std::string_view text, bool finish) override {
+        std::cout << "OnText:" << text << std::endl;
+        assert(text == test_text);
+        this->Close(wsocket::CloseCode::CLOSE_NORMAL);
+    }
     void OnBinary(wsocket::Buffer buffer, bool finish) override {
         std::cout << "OnBinary:" << std::string(reinterpret_cast<char *>(buffer.buf), buffer.size) << std::endl;
     }
+
+    asio::io_context &executor_;
 };
 
 void test_asio_wsocket_zstd() {
@@ -560,12 +606,12 @@ void test_asio_wsocket_zstd() {
         }
 
         std::cout << peer.remote_endpoint().address().to_string() << ":" << peer.remote_endpoint().port() << std::endl;
-        auto cli = TestZstdWSocket::Create(std::move(peer));
+        auto cli = TestZstdWSocket::Create(io_executor, std::move(peer));
         cli->Start();
     });
 
 
-    auto client = TestZstdWSocket::Create(io_executor.get_executor());
+    auto client = TestZstdWSocket::Create(io_executor);
     client->Handshake(asio::ip::tcp::endpoint(asio::ip::make_address_v4("127.0.0.1"), 12000));
 
     io_executor.run();
@@ -580,8 +626,8 @@ int main() {
         testFrameHeader();
         test_SlidingBuffer();
         test_WSocketContext();
-        // test_asio_wsocket();
-        // test_asio_unix_wsocket();
+        test_asio_wsocket();
+        test_asio_unix_wsocket();
         test_asio_wsocket_zstd();
     } catch(const std::exception &e) {
         std::cout << "exception: " << e.what() << std::endl;

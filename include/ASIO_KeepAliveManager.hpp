@@ -36,19 +36,7 @@ public:
     void Start() { Flush(); }
 
     // Refresh timer, restart counting
-    void Flush() {
-        // Cancel previous timers
-        expired_timer_.cancel();
-        timeout_timer_.cancel();
-
-        // Set new expiration timer
-        expired_timer_.expires_after(expired_time_ms_);
-        expired_timer_.async_wait([this](std::error_code ec) { OnExpiredTimerTimeout(ec); });
-
-        // Set new timeout timer
-        timeout_timer_.expires_after(timeout_ms_);
-        timeout_timer_.async_wait([this](std::error_code ec) { OnTimeoutTimerTimeout(ec); });
-    }
+    void Flush();
 
     void Stop() {
         expired_timer_.cancel();
@@ -65,28 +53,10 @@ public:
 
 private:
     // Expiration timer timeout handler
-    void OnExpiredTimerTimeout(std::error_code ec) {
-        if(ec == asio::error::operation_aborted) {
-            return;
-        }
-
-        // Notify listener that keep-alive has expired
-        if(listener_) {
-            listener_->OnKeepAliveExpired(ec);
-        }
-    }
+    void OnExpiredTimerTimeout(std::error_code ec);
 
     // Timeout timer timeout handler
-    void OnTimeoutTimerTimeout(std::error_code ec) {
-        if(ec == asio::error::operation_aborted) {
-            return;
-        }
-        // Notify listener of timeout
-        if(listener_) {
-            listener_->OnKeepAliveTimeout(ec);
-        }
-    }
-
+    void OnTimeoutTimerTimeout(std::error_code ec);
 
 private:
     asio::steady_timer        expired_timer_;   // Keep-alive expiration timer
@@ -95,6 +65,42 @@ private:
     std::chrono::milliseconds timeout_ms_;      // Connection timeout time
     Listener                 *listener_{nullptr};
 };
+
+
+void KeepAliveManager::Flush() {
+    // Cancel previous timers
+    expired_timer_.cancel();
+    timeout_timer_.cancel();
+
+    // Set new expiration timer
+    expired_timer_.expires_after(expired_time_ms_);
+    expired_timer_.async_wait([this](std::error_code ec) { OnExpiredTimerTimeout(ec); });
+
+    // Set new timeout timer
+    timeout_timer_.expires_after(timeout_ms_);
+    timeout_timer_.async_wait([this](std::error_code ec) { OnTimeoutTimerTimeout(ec); });
+}
+
+void KeepAliveManager::OnExpiredTimerTimeout(std::error_code ec) {
+    if(ec == asio::error::operation_aborted) {
+        return;
+    }
+
+    // Notify listener that keep-alive has expired
+    if(listener_) {
+        listener_->OnKeepAliveExpired(ec);
+    }
+}
+
+void KeepAliveManager::OnTimeoutTimerTimeout(std::error_code ec) {
+    if(ec == asio::error::operation_aborted) {
+        return;
+    }
+    // Notify listener of timeout
+    if(listener_) {
+        listener_->OnKeepAliveTimeout(ec);
+    }
+}
 
 } // namespace wsocket
 

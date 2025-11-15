@@ -1,5 +1,19 @@
-﻿/build/
+﻿# ide files
 .idea/
+.vscode/
 
+# build files
+build/
 
-test_unix_wsocket.sock
+# compiled object files
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+
+# socket files
+*.sock
+

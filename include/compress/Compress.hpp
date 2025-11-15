@@ -20,11 +20,11 @@ public:
 
     virtual std::shared_ptr<CompressContext> Create() = 0;
 
-    virtual std::string const Name() = 0;
-    virtual CompressType      Type() = 0;
+    virtual std::string  Name() const = 0;
+    virtual CompressType Type() const = 0;
 
-    virtual std::string const Configuration() { return ""; }
-    virtual bool              Configure(std::string const &config) { return true; }
+    virtual std::string Configuration() const { return ""; }
+    virtual bool        Configure(std::string const &config) { return true; }
 
     virtual Buffer Compress(const Buffer &buf)   = 0;
     virtual Buffer Decompress(const Buffer &buf) = 0;
